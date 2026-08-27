@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { API_BASE_URL, WS_BASE_URL } from "../../config";
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Users, Activity, Wifi, Lock, TrendingUp, TrendingDown, ChevronRight, ArrowLeft, Clock, Monitor, Zap, AlertTriangle, CheckCircle, Eye } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -117,6 +118,8 @@ function AdminLiveSessionPanel({ employee, onBack, onRefresh }: { employee: Empl
   const [liveScore, setLiveScore] = useState<number>(activeSession?.trust_score ?? 100);
   const [liveStatus, setLiveStatus] = useState<string>(activeSession?.status || 'idle');
   const [isImpostor, setIsImpostor] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [wsFailed, setWsFailed] = useState(false);
   const [liveMetrics, setLiveMetrics] = useState({
     avgDwell: 110,
     avgFlight: 140,
@@ -131,12 +134,29 @@ function AdminLiveSessionPanel({ employee, onBack, onRefresh }: { employee: Empl
   });
   const [contributions, setContributions] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    if (!sessionId || activeSession?.status !== 'active') return;
+  // WS reconnect state
+  const wsRef = useRef<WebSocket | null>(null);
+  const retryCount = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDestroyed = useRef(false);
 
-    const ws = new WebSocket(`ws://localhost:8000/ws/session/${sessionId}`);
+  const ADMIN_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
+  const ADMIN_MAX_RETRIES = 10;
 
-    ws.onmessage = (event) => {
+  const connectAdminWs = useCallback(() => {
+    if (isDestroyed.current || !sessionId || activeSession?.status !== 'active') return;
+
+    const socket = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}`);
+    wsRef.current = socket;
+
+    socket.onopen = () => {
+      if (isDestroyed.current) { socket.close(); return; }
+      retryCount.current = 0;
+      setWsConnected(true);
+      setWsFailed(false);
+    };
+
+    socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'score_update') {
@@ -144,31 +164,59 @@ function AdminLiveSessionPanel({ employee, onBack, onRefresh }: { employee: Empl
           if (data.live_averages) setLiveMetrics(data.live_averages);
           if (data.baseline_means) setBaselineMetrics(data.baseline_means);
           if (data.contributions) setContributions(data.contributions);
-          if (data.trust_score < 60) setLiveStatus('locked');
+          if (data.trust_score < (data.lock_threshold || 60)) setLiveStatus('locked');
+          else setLiveStatus('active');
         } else if (data.type === 'enroll_update' && data.baseline_means) {
           setBaselineMetrics(data.baseline_means);
         }
       } catch (e) {
-        console.error("WS error in admin view:", e);
+        console.error("Admin WS parse error:", e);
       }
     };
 
-    return () => {
-      ws.close();
+    socket.onclose = () => {
+      if (isDestroyed.current) return;
+      wsRef.current = null;
+      setWsConnected(false);
+
+      if (retryCount.current >= ADMIN_MAX_RETRIES) {
+        setWsFailed(true);
+        return;
+      }
+
+      const delay = ADMIN_BACKOFF_MS[Math.min(retryCount.current, ADMIN_BACKOFF_MS.length - 1)];
+      retryCount.current += 1;
+      retryTimer.current = setTimeout(connectAdminWs, delay);
+    };
+
+    socket.onerror = () => {
+      socket.close();
     };
   }, [sessionId, activeSession?.status]);
+
+  useEffect(() => {
+    isDestroyed.current = false;
+    retryCount.current = 0;
+    connectAdminWs();
+
+    return () => {
+      isDestroyed.current = true;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, [connectAdminWs]);
 
   const handleSimulate = async () => {
     if (!sessionId) return;
     const nextState = !isImpostor;
-    await fetch(`http://localhost:8000/api/admin/simulate/${sessionId}?active=${nextState}`, { method: 'POST' });
+    await fetch(`${API_BASE_URL}/api/admin/simulate/${sessionId}?active=${nextState}`, { method: 'POST' });
     setIsImpostor(nextState);
     onRefresh();
   };
 
   const handleForceLogout = async () => {
     if (!sessionId) return;
-    await fetch(`http://localhost:8000/api/admin/sessions/${sessionId}/terminate`, { method: 'POST' });
+    await fetch(`${API_BASE_URL}/api/admin/sessions/${sessionId}/terminate`, { method: 'POST' });
     setLiveStatus('ended');
     onRefresh();
   };
@@ -227,10 +275,13 @@ function AdminLiveSessionPanel({ employee, onBack, onRefresh }: { employee: Empl
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px', marginBottom: '24px' }}>
         
         {/* Live Score & Status */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', textAlign: 'center' }}>
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', textAlign: 'center', position: 'relative' }}>
           <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: liveStatus === 'active' ? 'var(--accent-trust)' : 'var(--accent-danger)', display: 'inline-block' }}></span>
-            Real-time Continuous Score
+            <span style={{
+              width: '8px', height: '8px', borderRadius: '50%', display: 'inline-block',
+              backgroundColor: wsConnected ? 'var(--accent-trust)' : (wsFailed ? 'var(--accent-danger)' : 'var(--accent-warn)'),
+            }}></span>
+            {wsConnected ? 'Real-time Continuous Score' : (wsFailed ? 'Feed Lost' : 'Reconnecting…')}
           </div>
           <div className="display-font mono-font" style={{ fontSize: '56px', color: scoreColor, fontWeight: '700', lineHeight: 1 }}>
             {liveScore}
@@ -239,8 +290,29 @@ function AdminLiveSessionPanel({ employee, onBack, onRefresh }: { employee: Empl
             {liveScore >= 80 ? 'Healthy Biometric Stream' : (liveScore >= 60 ? 'Elevated Anomaly Drift' : 'Session Compromised / Locked')}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', padding: '4px 10px', backgroundColor: 'var(--bg-elevated)', borderRadius: '12px' }}>
-            Session #{sessionId || '—'} · Live TLS WebSocket
+            Session #{sessionId || '—'} · {wsConnected ? 'Live TLS WebSocket' : 'Reconnecting…'}
           </div>
+          {/* Disconnected overlay on score card */}
+          {!wsConnected && !wsFailed && (
+            <div style={{
+              position: 'absolute', inset: 0, backgroundColor: 'rgba(var(--bg-surface-rgb, 255,255,255),0.75)',
+              borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '13px', fontWeight: '600', color: 'var(--accent-warn)', gap: '6px', backdropFilter: 'blur(2px)'
+            }}>
+              <AlertTriangle size={16} /> Reconnecting to live feed…
+            </div>
+          )}
+          {wsFailed && (
+            <div style={{
+              position: 'absolute', inset: 0, backgroundColor: 'rgba(var(--bg-surface-rgb, 255,255,255),0.85)',
+              borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: '8px', backdropFilter: 'blur(2px)'
+            }}>
+              <AlertTriangle size={20} color="var(--accent-danger)" />
+              <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--accent-danger)' }}>Live feed disconnected</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Refresh the page to resume</span>
+            </div>
+          )}
         </div>
 
         {/* Live Behavioral Metrics Table */}
@@ -312,9 +384,9 @@ export default function AdminDashboard() {
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
 
   const fetchData = useCallback(() => {
-    fetch('http://localhost:8000/api/admin/employees').then(r => r.json()).then(setEmployees).catch(() => {});
-    fetch('http://localhost:8000/api/admin/events').then(r => r.json()).then(setEvents).catch(() => {});
-    fetch('http://localhost:8000/api/admin/network_stats').then(r => r.json()).then(setNetworkStats).catch(() => {});
+    fetch(API_BASE_URL + '/api/admin/employees').then(r => r.json()).then(setEmployees).catch(() => {});
+    fetch(API_BASE_URL + '/api/admin/events').then(r => r.json()).then(setEvents).catch(() => {});
+    fetch(API_BASE_URL + '/api/admin/network_stats').then(r => r.json()).then(setNetworkStats).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -325,7 +397,7 @@ export default function AdminDashboard() {
   }, [role, navigate, fetchData]);
 
   const handleSimulate = (sessionId: number, active: boolean) => {
-    fetch(`http://localhost:8000/api/admin/simulate/${sessionId}?active=${active}`, { method: 'POST' })
+    fetch(`${API_BASE_URL}/api/admin/simulate/${sessionId}?active=${active}`, { method: 'POST' })
       .then(() => fetchData());
   };
 
@@ -462,7 +534,7 @@ export default function AdminDashboard() {
                                   </button>
                                   <button 
                                     onClick={() => {
-                                      fetch(`http://localhost:8000/api/admin/sessions/${latest.session_id}/terminate`, { method: 'POST' })
+                                      fetch(`${API_BASE_URL}/api/admin/sessions/${latest.session_id}/terminate`, { method: 'POST' })
                                         .then(() => fetchData());
                                     }}
                                     style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '12px', color: 'var(--text-primary)', fontWeight: '600' }}

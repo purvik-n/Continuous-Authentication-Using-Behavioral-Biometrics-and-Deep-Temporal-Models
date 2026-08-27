@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { API_BASE_URL, WS_BASE_URL } from "../../config";
 import { FileText, Download, CheckCircle, AlertTriangle, Activity } from 'lucide-react';
 
 export default function AuditLog() {
   const [events, setEvents] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/admin/events')
+    fetch(API_BASE_URL + '/api/admin/events')
       .then(r => r.json())
       .then(setEvents)
       .catch(console.error);

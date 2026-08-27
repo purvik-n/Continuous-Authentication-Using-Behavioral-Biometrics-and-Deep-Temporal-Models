@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { API_BASE_URL, WS_BASE_URL } from "../../config";
 import { Settings, Save, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 export default function PolicySettings() {
@@ -8,7 +9,7 @@ export default function PolicySettings() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/admin/settings')
+    fetch(API_BASE_URL + '/api/admin/settings')
       .then(res => res.json())
       .then(data => {
         setLockThreshold(data.lock_threshold || 60);
@@ -21,7 +22,7 @@ export default function PolicySettings() {
     setSaving(true);
     setMessage('');
     try {
-      const res = await fetch('http://localhost:8000/api/admin/settings', {
+      const res = await fetch(API_BASE_URL + '/api/admin/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

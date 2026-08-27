@@ -1,0 +1,8 @@
+CMU Keystroke Dynamics Benchmark Validation
+Dataset URL: http://www.cs.cmu.edu/~keystroke/DSL-StrongPasswordData.csv
+Model: scikit-learn IsolationForest (n_estimators=100, contamination=0.1)
+Subjects Evaluated: 51
+Training Samples (per subject): 200 genuine
+Test Samples (per subject): 200 genuine + 200 impostor
+
+Overall Equal Error Rate (EER): 0.1549 ± 0.1031

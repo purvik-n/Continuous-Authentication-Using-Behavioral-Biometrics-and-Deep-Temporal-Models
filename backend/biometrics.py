@@ -1,4 +1,5 @@
 from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 import datetime
 
@@ -15,6 +16,7 @@ def get_session_state(session_id: int):
     if session_id not in session_states:
         session_states[session_id] = {
             "model": None,
+            "scaler": None,
             "enrollment_data": [],
             "baseline_means": {},
             "trust_score": 100.0,
@@ -60,7 +62,7 @@ def process_enrollment_batch(session_id: int, features: dict) -> dict:
     
     state["enrollment_data"].append(vector)
     
-    REQUIRED_BATCHES = 5
+    REQUIRED_BATCHES = 15
     current_batches = len(state["enrollment_data"])
     
     # Keep rolling baseline means even during enrollment
@@ -74,8 +76,12 @@ def process_enrollment_batch(session_id: int, features: dict) -> dict:
     }
     
     if current_batches >= REQUIRED_BATCHES:
-        clf = IsolationForest(n_estimators=100, contamination=0.1, random_state=42)
-        clf.fit(X)
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        state["scaler"] = scaler
+
+        clf = IsolationForest(n_estimators=100, contamination=0.02, random_state=42)
+        clf.fit(X_scaled)
         state["model"] = clf
         state["is_enrolled"] = True
         return {
@@ -132,15 +138,23 @@ def process_live_batch(session_id: int, features: dict) -> dict:
     
     # Isolation Forest anomaly scoring
     X = np.array([vector])
-    iforest_raw = float(state["model"].decision_function(X)[0])
+    X_scaled = state["scaler"].transform(X)
+    iforest_raw = float(state["model"].decision_function(X_scaled)[0])
     
+    # Logging for calibration
+    print(f"DEBUG: session_id={session_id} | iforest_raw={iforest_raw:.4f} | weighted_drift={weighted_drift:.4f}")
+
     # Anomaly conversion:
     # If weighted drift < 0.35 -> Score stays high (92-100)
     # If weighted drift is 0.75-1.5 -> Score drops to elevated risk (65-80)
     # If weighted drift is > 2.0 or impostor -> Score drops into lock territory (<60)
     
     drift_score = max(100 - (weighted_drift * 42), 5)
-    iforest_norm = min(max((iforest_raw + 0.18) * 260, 10), 100)
+    
+    # We will adjust this calibration mapping based on observed values.
+    # Normal IF raw scores sit between -0.04 and +0.08. 
+    # To keep normal behavior in the 80-100 range:
+    iforest_norm = min(max((iforest_raw * 400) + 95, 10), 100)
     
     instant_target = (drift_score * 0.65) + (iforest_norm * 0.35)
     instant_target = min(max(instant_target, 0), 100)

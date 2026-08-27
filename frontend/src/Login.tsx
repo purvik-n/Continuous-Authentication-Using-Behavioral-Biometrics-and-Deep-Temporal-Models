@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from "./config";
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Loader2, User, Key, Users } from 'lucide-react';
+import { useAuth } from './contexts/AuthContext';
 
 interface Employee {
   username: string;
@@ -18,10 +20,11 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const auth = useAuth();
 
   useEffect(() => {
     // Fetch seeded employees on mount
-    fetch('http://localhost:8000/api/auth/users')
+    fetch(API_BASE_URL + '/api/auth/users')
       .then(res => res.json())
       .then(data => setEmployees(data))
       .catch(err => console.error("Failed to fetch users:", err));
@@ -41,7 +44,7 @@ export default function Login() {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/api/auth/login', {
+      const response = await fetch(API_BASE_URL + '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -53,17 +56,9 @@ export default function Login() {
 
       const data = await response.json();
       
-      // Store all session info
-      localStorage.setItem('trustloop_token', data.access_token);
-      localStorage.setItem('trustloop_session_id', data.session_id);
-      localStorage.setItem('trustloop_user_id', data.user_id || '1');
-      localStorage.setItem('trustloop_role', data.role);
-      localStorage.setItem('trustloop_full_name', data.full_name);
-      localStorage.setItem('trustloop_network_isp', data.network_isp);
-      localStorage.setItem('trustloop_initial_trust', data.initial_trust);
-      localStorage.setItem('trustloop_network_logic', data.network_logic);
-      localStorage.setItem('trustloop_is_simulated', data.is_simulated ? 'true' : 'false');
-      
+      // Delegate all storage + state updates to AuthContext
+      auth.login(data);
+
       if (data.role === 'admin') {
         navigate('/admin/overview');
       } else {

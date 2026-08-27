@@ -2,20 +2,16 @@ import React from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { ShieldCheck, Users, Activity, Map, Settings, LayoutDashboard, LogOut, FileText, Bell } from 'lucide-react';
 import Notifications from '../components/Notifications';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const fullName = localStorage.getItem('trustloop_full_name');
-  const role = localStorage.getItem('trustloop_role');
-
-  if (role !== 'admin') {
-    navigate('/login');
-    return null;
-  }
+  const auth = useAuth();
 
   const handleLogout = () => {
-    localStorage.clear();
+    auth.logout();
     navigate('/login');
   };
 

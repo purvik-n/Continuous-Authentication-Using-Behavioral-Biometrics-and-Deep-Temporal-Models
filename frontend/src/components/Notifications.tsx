@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL, WS_BASE_URL } from "../config";
 import { Bell, AlertTriangle, CheckCircle, Activity, X } from 'lucide-react';
 
 export default function Notifications() {
@@ -7,7 +8,7 @@ export default function Notifications() {
   const [unread, setUnread] = useState(0);
 
   const fetchEvents = () => {
-    fetch('http://localhost:8000/api/admin/events')
+    fetch(API_BASE_URL + '/api/admin/events')
       .then(r => r.json())
       .then(data => {
         setEvents(data);

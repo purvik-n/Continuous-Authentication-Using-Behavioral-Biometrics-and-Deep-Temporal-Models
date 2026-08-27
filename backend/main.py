@@ -1,17 +1,24 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
+import os
 from auth import router as auth_router
-from db import init_db, get_db
+from db import init_db, get_db, pwd_context
+from sqlalchemy.orm import Session as DbSession
+from models import User, Session, Setting
+import string
+import random
 
 app = FastAPI(title="TrustLoop API")
 
 active_websockets: dict[int, WebSocket] = {}
 
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[FRONTEND_URL] if FRONTEND_URL != "*" else ["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,50 +37,104 @@ app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 # --- Admin endpoints ---
 
 @app.get("/api/admin/employees")
-def get_all_employees():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT u.id, u.username, u.full_name, u.department,
-               s.id as session_id, s.trust_score, s.status, s.started_at, 
-               s.ip_address, s.user_agent, s.network_isp, s.network_recognized,
-               s.initial_trust_score, s.last_active_at, s.lat, s.lon
-        FROM users u
-        LEFT JOIN sessions s ON u.id = s.user_id
-        WHERE u.role = 'employee'
-        ORDER BY u.id, s.started_at DESC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-    
+def get_all_employees(db: DbSession = Depends(get_db)):
+    users = db.query(User).filter(User.role == 'employee').all()
     employees = {}
-    for row in rows:
-        uid = row['id']
-        if uid not in employees:
-            employees[uid] = {
-                "id": uid,
-                "username": row['username'],
-                "full_name": row['full_name'],
-                "department": row['department'],
-                "sessions": []
-            }
-        if row['session_id']:
-            employees[uid]["sessions"].append({
-                "session_id": row['session_id'],
-                "trust_score": row['trust_score'],
-                "status": row['status'],
-                "started_at": row['started_at'],
-                "last_active_at": row['last_active_at'],
-                "ip_address": row['ip_address'],
-                "user_agent": row['user_agent'],
-                "network_isp": row['network_isp'],
-                "network_recognized": row['network_recognized'],
-                "initial_trust_score": row['initial_trust_score'],
-                "lat": row['lat'],
-                "lon": row['lon'],
+    for u in users:
+        employees[u.id] = {
+            "id": u.id,
+            "username": u.username,
+            "full_name": u.full_name,
+            "department": u.department,
+            "is_active": u.is_active,
+            "sessions": []
+        }
+        for s in sorted(u.sessions, key=lambda x: x.started_at, reverse=True):
+            employees[u.id]["sessions"].append({
+                "session_id": s.id,
+                "trust_score": s.trust_score,
+                "status": s.status,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "last_active_at": s.last_active_at.isoformat() if s.last_active_at else None,
+                "ip_address": s.ip_address,
+                "user_agent": s.user_agent,
+                "network_isp": s.network_isp,
+                "network_recognized": s.network_recognized,
+                "initial_trust_score": s.initial_trust_score,
+                "lat": s.lat,
+                "lon": s.lon,
             })
-    
     return list(employees.values())
+
+class EmployeeCreate(BaseModel):
+    full_name: str
+    username: str
+    department: str
+
+@app.post("/api/admin/employees")
+def add_employee(emp: EmployeeCreate, db: DbSession = Depends(get_db)):
+    # Generate temporary password
+    temp_password = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    hashed_password = pwd_context.hash(temp_password)
+    
+    existing = db.query(User).filter(User.username == emp.username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+        
+    new_user = User(
+        full_name=emp.full_name,
+        username=emp.username,
+        department=emp.department,
+        password_hash=hashed_password,
+        role="employee",
+        is_active=True
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return {
+        "status": "created",
+        "id": new_user.id,
+        "username": new_user.username,
+        "full_name": new_user.full_name,
+        "department": new_user.department,
+        "temp_password": temp_password # Return once for the admin to copy
+    }
+
+class EmployeeUpdate(BaseModel):
+    full_name: str
+    department: str
+    reset_password: bool = False
+
+@app.put("/api/admin/employees/{user_id}")
+def edit_employee(user_id: int, update: EmployeeUpdate, db: DbSession = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    user.full_name = update.full_name
+    user.department = update.department
+    
+    temp_password = None
+    if update.reset_password:
+        temp_password = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+        user.password_hash = pwd_context.hash(temp_password)
+        
+    db.commit()
+    return {
+        "status": "updated",
+        "temp_password": temp_password
+    }
+
+@app.delete("/api/admin/employees/{user_id}")
+def deactivate_employee(user_id: int, db: DbSession = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = False
+    db.commit()
+    return {"status": "deactivated"}
 
 @app.get("/api/admin/events")
 def get_events():
@@ -81,34 +142,20 @@ def get_events():
     return get_org_events()
 
 @app.get("/api/admin/network_stats")
-def get_network_stats():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT network_recognized, COUNT(*) as count FROM sessions GROUP BY network_recognized")
-    rows = cursor.fetchall()
-    conn.close()
-    recognized = 0
-    unrecognized = 0
-    for row in rows:
-        if row['network_recognized'] == 1:
-            recognized = row['count']
-        else:
-            unrecognized = row['count']
+def get_network_stats(db: DbSession = Depends(get_db)):
+    recognized = db.query(Session).filter(Session.network_recognized == True).count()
+    unrecognized = db.query(Session).filter(Session.network_recognized == False).count()
     return {"recognized": recognized, "unrecognized": unrecognized}
 
 @app.post("/api/admin/simulate/{session_id}")
-def admin_simulate_impostor(session_id: int, active: bool = True):
+def admin_simulate_impostor(session_id: int, active: bool = True, db: DbSession = Depends(get_db)):
     from biometrics import set_admin_impostor, add_org_event
     set_admin_impostor(session_id, active)
     # Look up which user this session belongs to
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT u.username, u.full_name FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = ?", (session_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
+    session = db.query(Session).filter(Session.id == session_id).first()
+    if session and session.user:
         event = "Admin Triggered Impostor" if active else "Admin Stopped Impostor"
-        add_org_event(event, row['username'], row['full_name'], session_id=session_id)
+        add_org_event(event, session.user.username, session.user.full_name, session_id=session_id)
     return {"status": "ok", "session_id": session_id, "impostor_active": active}
 
 class SettingsUpdate(BaseModel):
@@ -116,32 +163,26 @@ class SettingsUpdate(BaseModel):
     risk_threshold: float
 
 @app.get("/api/admin/settings")
-def get_settings():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT key, value FROM settings")
-    settings = {row['key']: float(row['value']) for row in cursor.fetchall()}
-    conn.close()
+def get_settings(db: DbSession = Depends(get_db)):
+    settings_rows = db.query(Setting).all()
+    settings = {s.key: float(s.value) for s in settings_rows}
     return settings
 
 @app.post("/api/admin/settings")
-def update_settings(settings: SettingsUpdate):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE settings SET value = ? WHERE key = 'lock_threshold'", (str(settings.lock_threshold),))
-    cursor.execute("UPDATE settings SET value = ? WHERE key = 'risk_threshold'", (str(settings.risk_threshold),))
-    conn.commit()
-    conn.close()
+def update_settings(settings: SettingsUpdate, db: DbSession = Depends(get_db)):
+    lock = db.query(Setting).filter(Setting.key == 'lock_threshold').first()
+    if lock: lock.value = str(settings.lock_threshold)
+    risk = db.query(Setting).filter(Setting.key == 'risk_threshold').first()
+    if risk: risk.value = str(settings.risk_threshold)
+    db.commit()
     return {"status": "ok"}
 
 @app.post("/api/admin/sessions/{session_id}/terminate")
-async def admin_terminate_session(session_id: int):
-    # Mark session ended in DB
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE sessions SET status = 'ended' WHERE id = ?", (session_id,))
-    conn.commit()
-    conn.close()
+async def admin_terminate_session(session_id: int, db: DbSession = Depends(get_db)):
+    session = db.query(Session).filter(Session.id == session_id).first()
+    if session:
+        session.status = 'ended'
+        db.commit()
     
     # Close websocket
     if session_id in active_websockets:
@@ -151,18 +192,19 @@ async def admin_terminate_session(session_id: int):
     return {"status": "terminated"}
 
 @app.get("/api/employee/sessions")
-def get_my_sessions(user_id: int):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id as session_id, ip_address, user_agent, network_isp, 
-               initial_trust_score, trust_score, started_at, last_active_at, status
-        FROM sessions WHERE user_id = ?
-        ORDER BY started_at DESC
-    """, (user_id,))
-    sessions = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return sessions
+def get_my_sessions(user_id: int, db: DbSession = Depends(get_db)):
+    sessions = db.query(Session).filter(Session.user_id == user_id).order_by(Session.started_at.desc()).all()
+    return [{
+        "session_id": s.id,
+        "ip_address": s.ip_address,
+        "user_agent": s.user_agent,
+        "network_isp": s.network_isp,
+        "initial_trust_score": s.initial_trust_score,
+        "trust_score": s.trust_score,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "last_active_at": s.last_active_at.isoformat() if s.last_active_at else None,
+        "status": s.status
+    } for s in sessions]
 
 # --- WebSocket ---
 
@@ -182,17 +224,13 @@ async def broadcast_to_session(session_id: int, payload: dict):
             active_websockets[session_id].remove(ws)
 
 @app.websocket("/ws/session/{session_id}")
-async def websocket_session(websocket: WebSocket, session_id: int):
+async def websocket_session(websocket: WebSocket, session_id: int, db: DbSession = Depends(get_db)):
     await websocket.accept()
     
     # Look up username for org events
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT u.username, u.full_name FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = ?", (session_id,))
-    row = cursor.fetchone()
-    conn.close()
-    ws_username = row['username'] if row else "unknown"
-    ws_fullname = row['full_name'] if row else "Unknown"
+    session_obj = db.query(Session).filter(Session.id == session_id).first()
+    ws_username = session_obj.user.username if session_obj and session_obj.user else "unknown"
+    ws_fullname = session_obj.user.full_name if session_obj and session_obj.user else "Unknown"
     
     if session_id not in active_websockets:
         active_websockets[session_id] = []
@@ -224,14 +262,14 @@ async def websocket_session(websocket: WebSocket, session_id: int):
                 result = process_live_batch(session_id, features)
                 score = result.get("trust_score", 100)
                 
-                # Read dynamic thresholds
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM settings WHERE key = 'lock_threshold'")
-                lock_threshold = float(cursor.fetchone()['value'])
-                cursor.execute("SELECT value FROM settings WHERE key = 'risk_threshold'")
-                risk_threshold = float(cursor.fetchone()['value'])
-                conn.close()
+                # Re-fetch settings each time using a fresh session generator since Depends(get_db) 
+                # might be bound to the websocket connection's lifecycle and DB could time out.
+                # But we'll try using the injected db first.
+                lock_setting = db.query(Setting).filter(Setting.key == 'lock_threshold').first()
+                risk_setting = db.query(Setting).filter(Setting.key == 'risk_threshold').first()
+                
+                lock_threshold = float(lock_setting.value) if lock_setting else 60.0
+                risk_threshold = float(risk_setting.value) if risk_setting else 80.0
                 
                 # Fire org events on threshold crossings
                 if score < lock_threshold:

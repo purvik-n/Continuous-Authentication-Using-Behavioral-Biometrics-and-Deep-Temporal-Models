@@ -1,18 +1,20 @@
 import React from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldCheck, Monitor, Wifi, Bell, Settings, LayoutDashboard, LogOut, Briefcase } from 'lucide-react';
+import { ShieldCheck, Monitor, Wifi, Bell, Settings, LayoutDashboard, LogOut, Briefcase, Radio, AlertCircle } from 'lucide-react';
 import Notifications from '../components/Notifications';
 import { EmployeeProvider, useEmployeeContext } from '../contexts/EmployeeContext';
+import { useAuth } from '../contexts/AuthContext';
 
 function EmployeeSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const fullName = localStorage.getItem('trustloop_full_name');
+  const auth = useAuth();
   
-  const { trustScore } = useEmployeeContext();
+  const { trustScore, wsStatus } = useEmployeeContext();
 
   const handleLogout = () => {
-    localStorage.clear();
+    auth.logout();
     navigate('/login');
   };
 
@@ -93,6 +95,8 @@ function EmployeeSidebar() {
         {/* Topbar */}
         <header style={{ height: '64px', backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* WS connection status pill */}
+            <WsStatusPill status={wsStatus} />
             <Notifications />
           </div>
         </header>
@@ -106,15 +110,25 @@ function EmployeeSidebar() {
   );
 }
 
+// WS status indicator pill shown in the topbar
+function WsStatusPill({ status }: { status: string }) {
+  const cfg: Record<string, { color: string; bg: string; label: string; Icon: React.FC<any> }> = {
+    connected:     { color: '#12B76A', bg: 'rgba(18,183,106,0.10)', label: 'Live',          Icon: Radio },
+    connecting:    { color: '#F79009', bg: 'rgba(247,144,9,0.10)',  label: 'Connecting…',  Icon: Radio },
+    reconnecting:  { color: '#F79009', bg: 'rgba(247,144,9,0.10)',  label: 'Reconnecting…', Icon: AlertCircle },
+    disconnected:  { color: '#F04438', bg: 'rgba(240,68,56,0.10)',  label: 'Disconnected',  Icon: AlertCircle },
+    failed:        { color: '#F04438', bg: 'rgba(240,68,56,0.10)',  label: 'Feed Lost',     Icon: AlertCircle },
+  };
+  const { color, bg, label, Icon } = cfg[status] ?? cfg.connecting;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '20px', backgroundColor: bg, fontSize: '12px', fontWeight: '600', color }}>
+      <Icon size={13} />
+      {label}
+    </div>
+  );
+}
+
 export default function EmployeeLayout() {
-  const navigate = useNavigate();
-  const role = localStorage.getItem('trustloop_role');
-
-  if (role !== 'employee') {
-    navigate('/login');
-    return null;
-  }
-
   return (
     <EmployeeProvider>
       <EmployeeSidebar />

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { API_BASE_URL, WS_BASE_URL } from "../../config";
 import { Map, Wifi, CheckCircle, AlertTriangle } from 'lucide-react';
 import { ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, ZAxis, Cell, PieChart, Pie } from 'recharts';
 
@@ -7,12 +8,12 @@ export default function NetworkMap() {
   const [stats, setStats] = useState({ recognized: 0, unrecognized: 0 });
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/admin/employees')
+    fetch(API_BASE_URL + '/api/admin/employees')
       .then(r => r.json())
       .then(setEmployees)
       .catch(console.error);
 
-    fetch('http://localhost:8000/api/admin/network_stats')
+    fetch(API_BASE_URL + '/api/admin/network_stats')
       .then(r => r.json())
       .then(setStats)
       .catch(console.error);
