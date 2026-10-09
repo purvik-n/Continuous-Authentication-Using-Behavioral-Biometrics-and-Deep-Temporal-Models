@@ -11,7 +11,7 @@ export default function AuditLog() {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(r => r.json())
-      .then(setEvents)
+      .then(data => { if (Array.isArray(data)) setEvents(data); })
       .catch(console.error);
   }, []);
 

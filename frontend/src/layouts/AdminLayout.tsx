@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldCheck, Users, Activity, Map, Settings, LayoutDashboard, LogOut, FileText, Bell } from 'lucide-react';
+import { ShieldCheck, Users, Activity, Map, Settings, LayoutDashboard, LogOut, FileText, Bell, BrainCircuit } from 'lucide-react';
 import Notifications from '../components/Notifications';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -19,6 +19,7 @@ export default function AdminLayout() {
     { name: 'Overview', path: '/admin/overview', icon: <LayoutDashboard size={18} /> },
     { name: 'Employees', path: '/admin/employees', icon: <Users size={18} /> },
     { name: 'Network Map', path: '/admin/network', icon: <Map size={18} /> },
+    { name: 'Model Evaluation', path: '/admin/evaluation', icon: <BrainCircuit size={18} /> },
     { name: 'Audit Log', path: '/admin/audit', icon: <FileText size={18} /> },
     { name: 'Policy Settings', path: '/admin/policy', icon: <Settings size={18} /> },
   ];

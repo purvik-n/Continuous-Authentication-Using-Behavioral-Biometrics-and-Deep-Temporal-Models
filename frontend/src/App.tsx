@@ -14,6 +14,7 @@ import PolicySettings from './pages/admin/PolicySettings';
 import NetworkMap from './pages/admin/NetworkMap';
 import AuditLog from './pages/admin/AuditLog';
 import AdminEmployees from './pages/admin/AdminEmployees';
+import ModelEvaluation from './pages/admin/ModelEvaluation';
 
 import Workspace from './pages/employee/Workspace';
 import MyDevices from './pages/employee/MyDevices';
@@ -84,6 +85,7 @@ function App() {
               <Route path="network" element={<NetworkMap />} />
               <Route path="audit" element={<AuditLog />} />
               <Route path="policy" element={<PolicySettings />} />
+              <Route path="evaluation" element={<ModelEvaluation />} />
               <Route index element={<Navigate to="overview" replace />} />
             </Route>
           </Routes>

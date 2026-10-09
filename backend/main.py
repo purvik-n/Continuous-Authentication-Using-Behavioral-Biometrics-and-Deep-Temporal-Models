@@ -234,6 +234,13 @@ def get_network_stats(db: DbSession = Depends(get_db), _admin: User = Depends(re
     unrecognized = db.query(SessionModel).filter(SessionModel.network_recognized == False).count()
     return {"recognized": recognized, "unrecognized": unrecognized}
 
+from evaluation import evaluate_model
+
+@app.get("/api/admin/evaluation")
+def get_model_evaluation(_admin: User = Depends(require_admin)):
+    """Runs a live evaluation of the behavioral model and returns metrics."""
+    return evaluate_model()
+
 @app.post("/api/admin/simulate/{session_id}")
 def admin_simulate_impostor(session_id: int, active: bool = True, db: DbSession = Depends(get_db), _admin: User = Depends(require_admin)):
     set_admin_impostor(session_id, active)

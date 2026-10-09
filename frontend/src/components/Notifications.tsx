@@ -14,10 +14,11 @@ export default function Notifications() {
     })
       .then(r => r.json())
       .then(data => {
-        setEvents(data);
-        // Simple unread logic: count events with Risk or Lock
-        const alerts = data.filter((e: any) => e.event_type.includes('Risk') || e.event_type.includes('Lock'));
-        setUnread(alerts.length);
+        if (Array.isArray(data)) {
+          setEvents(data);
+          const alerts = data.filter((e: any) => e.event_type && (e.event_type.includes('Risk') || e.event_type.includes('Lock')));
+          setUnread(alerts.length);
+        }
       })
       .catch(console.error);
   };
