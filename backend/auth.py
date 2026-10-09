@@ -1,23 +1,53 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
-import jwt
-import requests
-import datetime
 import os
+import datetime
+import secrets
+import json
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+import jwt
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from db import get_db, pwd_context
 from sqlalchemy.orm import Session as DbSession
-from models import User, Session
+from models import User, Session as SessionModel, NetworkEvent, CorporateAllowlist
+from network_monitor import lookup_ip_telemetry, evaluate_network_risk, register_active_session
 
 router = APIRouter()
-SECRET_KEY = os.environ.get("JWT_SECRET", "trustloop_super_secret_dev_key")
-ALGORITHM = "HS256"
 
-# In-memory cache for IP API responses to avoid rate limits
-ip_cache = {}
+SECRET_KEY = os.environ.get("JWT_SECRET", "trustloop_super_secret_dev_key")
+ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
+LOGIN_LOCKOUT_MINUTES = int(os.environ.get("LOGIN_LOCKOUT_MINUTES", "15"))
+
+# In-memory store for tracking failed login attempts: username -> {"count": int, "locked_until": datetime}
+failed_login_attempts: Dict[str, Dict[str, Any]] = {}
+
+def reset_failed_logins(username: Optional[str] = None):
+    """Helper to reset lockout state (used by tests and administrative overrides)."""
+    if username:
+        failed_login_attempts.pop(username.strip().lower(), None)
+    else:
+        failed_login_attempts.clear()
+
+# ── Pydantic Request Models ───────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1)
+    device_fingerprint: Optional[Dict[str, Any]] = None
+
+class ForgotPasswordRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=4)
+
+
+# ── Auth Endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/me")
 def get_me(request: Request, db: DbSession = Depends(get_db)):
@@ -57,86 +87,140 @@ def get_users(db: DbSession = Depends(get_db)):
 def login(req: LoginRequest, request: Request, db: DbSession = Depends(get_db)):
     from biometrics import add_org_event
     
+    now = datetime.datetime.now(datetime.timezone.utc)
+    key = req.username.strip().lower()
+
+    # 1. Check Brute-Force Lockout
+    if key in failed_login_attempts:
+        record = failed_login_attempts[key]
+        locked_until = record.get("locked_until")
+        if locked_until:
+            if now < locked_until:
+                remaining_secs = int((locked_until - now).total_seconds())
+                remaining_mins = max(1, (remaining_secs + 59) // 60)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Account temporarily locked due to multiple failed login attempts. Try again in {remaining_mins} minute(s)."
+                )
+            else:
+                # Lockout expired
+                del failed_login_attempts[key]
+
     user = db.query(User).filter(User.username == req.username).first()
     
+    # 2. Check Password Verification
     if not user or not user.is_active or not pwd_context.verify(req.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-        
-    # Extract request metadata
+        rec = failed_login_attempts.get(key, {"count": 0, "locked_until": None})
+        new_count = rec["count"] + 1
+        if new_count >= LOGIN_MAX_ATTEMPTS:
+            locked_time = now + datetime.timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+            failed_login_attempts[key] = {"count": new_count, "locked_until": locked_time}
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed login attempts. Account temporarily locked for {LOGIN_LOCKOUT_MINUTES} minutes."
+            )
+        else:
+            failed_login_attempts[key] = {"count": new_count, "locked_until": None}
+            remaining = LOGIN_MAX_ATTEMPTS - new_count
+            raise HTTPException(
+                status_code=401,
+                detail=f"Invalid username or password. {remaining} attempt(s) remaining before lockout."
+            )
+
+    # Login succeeded: clear failed counter
+    if key in failed_login_attempts:
+        del failed_login_attempts[key]
+
+    # 3. Extract Metadata and Network Telemetry
     client_ip = request.client.host if request.client else "127.0.0.1"
     user_agent = request.headers.get("user-agent", "Unknown")
-    
-    network_isp = "Unknown"
-    initial_trust = 85.0
-    network_logic = "Session started at trust 85 — unrecognized network."
-    is_simulated = False
-    network_recognized = False
-    lat = None
-    lon = None
-    
-    # Network Layer Logic with caching and fallbacks
-    if client_ip in ["127.0.0.1", "::1"]:
-        network_isp = "Acme Corp Internal Network"
-        initial_trust = 100.0
-        network_logic = "Session started at trust 100 — recognized corporate network (Acme Corp Internal)."
-        is_simulated = True
-        network_recognized = True
-        lat = 37.7749 # Dummy SF coordinate for localhost
-        lon = -122.4194
-    else:
-        if client_ip in ip_cache:
-            resp = ip_cache[client_ip]
-        else:
-            try:
-                raw_resp = requests.get(f"http://ip-api.com/json/{client_ip}", timeout=2)
-                resp = raw_resp.json()
-                if resp.get("status") == "success":
-                    ip_cache[client_ip] = resp
-                else:
-                    resp = None
-            except Exception as e:
-                print(f"IP-API failed or timed out: {e}")
-                resp = None
-                
-        if resp:
-            network_isp = resp.get("isp", "Unknown")
-            lat = resp.get("lat")
-            lon = resp.get("lon")
-            known_isps = ["Google", "Amazon", "Acme"]
-            if any(known in network_isp for known in known_isps):
-                initial_trust = 100.0
-                network_logic = f"Session started at trust 100 — recognized network ({network_isp})."
-                network_recognized = True
-            else:
-                initial_trust = 85.0
-                network_logic = f"Session started at trust 85 — unrecognized network ({network_isp})."
-        else:
-            network_isp = "Unknown network (Lookup Failed)"
-            initial_trust = 85.0
-            network_logic = "Session started at trust 85 — network lookup failed, defaulting to neutral baseline."
+    device_fp_str = json.dumps(req.device_fingerprint or {
+        "ua": user_agent,
+        "browser": "Browser",
+        "os": "OS",
+        "screen": "1920x1080",
+        "timezone": "UTC",
+        "language": "en"
+    })
 
-    # Create session
-    new_session = Session(
+    # Telemetry lookup & risk scoring
+    telemetry = lookup_ip_telemetry(client_ip)
+    
+    # Check corporate allowlist in DB
+    allowlist_entries = db.query(CorporateAllowlist).all()
+    network_isp = telemetry.get("isp", "Unknown")
+    asn = telemetry.get("as", "Unknown")
+    lat = telemetry.get("lat", 37.7749 if client_ip in ["127.0.0.1", "::1"] else None)
+    lon = telemetry.get("lon", -122.4194 if client_ip in ["127.0.0.1", "::1"] else None)
+    
+    is_recognized = False
+    for entry in allowlist_entries:
+        if entry.entry_type == "ISP" and entry.value.lower() in network_isp.lower():
+            is_recognized = True
+            break
+        elif entry.entry_type == "ASN" and entry.value.lower() in asn.lower():
+            is_recognized = True
+            break
+        elif entry.entry_type == "IP" and entry.value == client_ip:
+            is_recognized = True
+            break
+    if client_ip in ["127.0.0.1", "::1"]:
+        is_recognized = True
+        network_isp = "Acme Corp Internal Network"
+
+    initial_trust = 100.0 if is_recognized else 85.0
+    network_logic = (
+        f"Session started at trust {int(initial_trust)} — recognized corporate network ({network_isp})."
+        if is_recognized else
+        f"Session started at trust {int(initial_trust)} — unrecognized external network ({network_isp})."
+    )
+
+    # 4. Create Session in DB
+    new_session = SessionModel(
         user_id=user.id,
         ip_address=client_ip,
         user_agent=user_agent,
         network_isp=network_isp,
-        network_recognized=network_recognized,
+        network_recognized=is_recognized,
         initial_trust_score=initial_trust,
         trust_score=initial_trust,
         status="active",
         lat=lat,
-        lon=lon
+        lon=lon,
+        device_fingerprint=device_fp_str,
+        asn=asn,
+        is_vpn=telemetry.get("is_vpn", False),
+        is_tor=telemetry.get("is_tor", False),
+        is_proxy=telemetry.get("proxy", False),
+        is_datacenter=telemetry.get("hosting", False),
+        network_risk_score=0.0 if is_recognized else 15.0
     )
     db.add(new_session)
     db.commit()
     db.refresh(new_session)
     session_id = new_session.id
-    
-    # Fire org event
+
+    # Register session for continuous background monitoring
+    register_active_session(session_id)
+
+    # 5. Record Initial Network Audit Event
+    audit_evt = NetworkEvent(
+        session_id=session_id,
+        user_id=user.id,
+        event_type="SESSION_START",
+        severity="low" if is_recognized else "medium",
+        risk_score=new_session.network_risk_score,
+        ip_address=client_ip,
+        location=f"{telemetry.get('city', 'Local')}, {telemetry.get('country', 'Internal')}",
+        details=network_logic
+    )
+    db.add(audit_evt)
+    db.commit()
+
+    # Org event
     add_org_event("Login", user.username, user.full_name, initial_trust, session_id)
-    
-    # Generate JWT with roles
+
+    # 6. Generate JWT
     token_data = {
         "sub": user.username,
         "user_id": user.id,
@@ -146,7 +230,7 @@ def login(req: LoginRequest, request: Request, db: DbSession = Depends(get_db)):
         "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
     }
     token = jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
-    
+
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -157,20 +241,14 @@ def login(req: LoginRequest, request: Request, db: DbSession = Depends(get_db)):
         "network_isp": network_isp,
         "initial_trust": initial_trust,
         "network_logic": network_logic,
-        "is_simulated": is_simulated
+        "is_simulated": client_ip in ["127.0.0.1", "::1"],
+        "network_risk_score": new_session.network_risk_score,
+        "telemetry": telemetry
     }
 
-# In-memory token store for forgot password: token -> {"username": str, "exp": datetime}
-reset_tokens = {}
+# ── Password Recovery Endpoints ───────────────────────────────────────────────
 
-class ForgotPasswordRequest(BaseModel):
-    username: str
-
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
-
-import secrets
+reset_tokens: Dict[str, Dict[str, Any]] = {}
 
 @router.post("/forgot-password")
 def forgot_password(req: ForgotPasswordRequest, db: DbSession = Depends(get_db)):
@@ -203,7 +281,14 @@ def reset_password(req: ResetPasswordRequest, db: DbSession = Depends(get_db)):
     user.password_hash = pwd_context.hash(req.new_password)
     db.commit()
     
-    # Invalidate token
     del reset_tokens[req.token]
-    
     return {"message": "Password reset successful"}
+
+class ResetLockoutRequest(BaseModel):
+    username: Optional[str] = None
+
+@router.post("/reset-lockout")
+def api_reset_lockout(req: Optional[ResetLockoutRequest] = None):
+    uname = req.username if req else None
+    reset_failed_logins(uname)
+    return {"status": "lockout_cleared", "username": uname}

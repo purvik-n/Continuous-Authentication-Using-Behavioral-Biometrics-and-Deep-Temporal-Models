@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from "../../config";
-import { Users, Zap, Power, Plus, Edit2, UserX, Check, X, AlertCircle } from 'lucide-react';
+import { Users, Zap, Power, Plus, Edit2, UserX, Check, X, AlertCircle, ShieldCheck } from 'lucide-react';
 
 export default function AdminEmployees() {
   const [employees, setEmployees] = useState<any[]>([]);
@@ -15,8 +15,13 @@ export default function AdminEmployees() {
   const [formData, setFormData] = useState({ full_name: '', username: '', department: '', reset_password: false });
   const [tempPassword, setTempPassword] = useState<string | null>(null);
 
+  const adminHeaders = () => ({
+    'Authorization': `Bearer ${localStorage.getItem('trustloop_token') || ''}`,
+    'Content-Type': 'application/json'
+  });
+
   const fetchEmployees = () => {
-    fetch(API_BASE_URL + '/api/admin/employees')
+    fetch(API_BASE_URL + '/api/admin/employees', { headers: adminHeaders() })
       .then(res => res.json())
       .then(data => setEmployees(data))
       .catch(err => console.error("Failed to load employees:", err));
@@ -31,7 +36,7 @@ export default function AdminEmployees() {
   const handleToggleImpostor = async (sessionId: number) => {
     const nextState = !simulatingMap[sessionId];
     try {
-      await fetch(`${API_BASE_URL}/api/admin/simulate/${sessionId}?active=${nextState}`, { method: 'POST' });
+      await fetch(`${API_BASE_URL}/api/admin/simulate/${sessionId}?active=${nextState}`, { method: 'POST', headers: adminHeaders() });
       setSimulatingMap(prev => ({ ...prev, [sessionId]: nextState }));
       fetchEmployees();
     } catch (e) {
@@ -41,7 +46,7 @@ export default function AdminEmployees() {
 
   const handleForceLogout = async (sessionId: number) => {
     try {
-      await fetch(`${API_BASE_URL}/api/admin/sessions/${sessionId}/terminate`, { method: 'POST' });
+      await fetch(`${API_BASE_URL}/api/admin/sessions/${sessionId}/terminate`, { method: 'POST', headers: adminHeaders() });
       fetchEmployees();
     } catch (e) {
       console.error(e);
@@ -53,7 +58,7 @@ export default function AdminEmployees() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/employees`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminHeaders(),
         body: JSON.stringify({ full_name: formData.full_name, username: formData.username, department: formData.department })
       });
       if (res.ok) {
@@ -61,7 +66,7 @@ export default function AdminEmployees() {
         setTempPassword(data.temp_password);
         fetchEmployees();
       } else {
-        alert("Failed to add employee. Username might exist.");
+        alert("Failed to add employee. Username might already exist.");
       }
     } catch (err) {
       console.error(err);
@@ -74,7 +79,7 @@ export default function AdminEmployees() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/employees/${editingEmp.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminHeaders(),
         body: JSON.stringify({ full_name: formData.full_name, department: formData.department, reset_password: formData.reset_password })
       });
       if (res.ok) {
@@ -95,7 +100,7 @@ export default function AdminEmployees() {
   const handleDeactivate = async (id: number) => {
     if (!confirm("Are you sure you want to deactivate this employee? They will no longer be able to log in.")) return;
     try {
-      await fetch(`${API_BASE_URL}/api/admin/employees/${id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/api/admin/employees/${id}`, { method: 'DELETE', headers: adminHeaders() });
       fetchEmployees();
     } catch (err) {
       console.error(err);
@@ -115,6 +120,22 @@ export default function AdminEmployees() {
     setIsEditModalOpen(true);
   };
 
+  // ─── Shared modal overlay style ───────────────────────────────────────────
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, backgroundColor: 'rgba(16,24,40,0.5)',
+    backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', zIndex: 9999, padding: '16px'
+  };
+  const modalStyle: React.CSSProperties = {
+    backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)',
+    borderRadius: '16px', padding: '28px', maxWidth: '480px', width: '100%',
+    boxShadow: '0 24px 48px -12px rgba(0,0,0,0.25)'
+  };
+  const labelStyle: React.CSSProperties = {
+    display: 'block', marginBottom: '6px', fontSize: '14px',
+    fontWeight: '500', color: 'var(--text-secondary)'
+  };
+
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
       <header style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -129,7 +150,8 @@ export default function AdminEmployees() {
         </div>
         <button 
           onClick={openAddModal}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg flex items-center space-x-2 font-medium transition-colors"
+          className="btn-primary"
+          style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
         >
           <Plus size={18} />
           <span>Add Employee</span>
@@ -163,6 +185,7 @@ export default function AdminEmployees() {
                 const score = sessionToControl?.trust_score ?? 100;
                 const isLocked = sessionToControl?.status === 'locked';
                 const hasActive = !!activeSession;
+                const scoreColor = score < 60 ? 'var(--accent-danger)' : (score < 80 ? 'var(--accent-warn)' : 'var(--accent-trust)');
 
                 return (
                   <tr key={emp.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -185,8 +208,8 @@ export default function AdminEmployees() {
                         <span style={{ color: 'var(--text-secondary)' }}>Idle</span>
                       )}
                     </td>
-                    <td className="mono-font" style={{ padding: '14px 16px', fontSize: '15px', fontWeight: '700', color: emp.is_active ? (score < 60 ? 'var(--accent-danger)' : (score < 80 ? 'var(--accent-warn)' : 'var(--accent-trust)')) : 'var(--text-secondary)', opacity: emp.is_active ? 1 : 0.5 }}>
-                      {hasActive ? `${Math.round(score)}%` : '—'}
+                    <td className="mono-font" style={{ padding: '14px 16px', fontSize: '15px', fontWeight: '700', color: emp.is_active ? scoreColor : 'var(--text-secondary)', opacity: emp.is_active ? 1 : 0.5 }}>
+                      {hasActive ? `${Math.round(score)}` : '—'}
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       {!emp.is_active ? (
@@ -217,7 +240,7 @@ export default function AdminEmployees() {
                               }}
                             >
                               <Zap size={13} />
-                              {simulatingMap[activeSession.session_id] ? 'Stop Impostor' : 'Simulate'}
+                              {simulatingMap[activeSession.session_id] ? 'Stop' : 'Simulate'}
                             </button>
                             <button
                               onClick={() => handleForceLogout(activeSession.session_id)}
@@ -231,12 +254,20 @@ export default function AdminEmployees() {
                             </button>
                           </>
                         )}
-                        <div className="h-6 w-px bg-slate-700/50 mx-2"></div>
-                        <button onClick={() => openEditModal(emp)} className="text-slate-400 hover:text-blue-400 p-1" title="Edit Employee">
+                        <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--border-subtle)', margin: '0 4px' }}></div>
+                        <button
+                          onClick={() => openEditModal(emp)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: 'var(--text-secondary)', borderRadius: '4px' }}
+                          title="Edit Employee"
+                        >
                           <Edit2 size={16} />
                         </button>
                         {emp.is_active && (
-                          <button onClick={() => handleDeactivate(emp.id)} className="text-slate-400 hover:text-rose-400 p-1" title="Deactivate Employee">
+                          <button
+                            onClick={() => handleDeactivate(emp.id)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: 'var(--text-secondary)', borderRadius: '4px' }}
+                            title="Deactivate Employee"
+                          >
                             <UserX size={16} />
                           </button>
                         )}
@@ -252,45 +283,55 @@ export default function AdminEmployees() {
 
       {/* Add Employee Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Users size={20} className="text-blue-500"/> Add Employee
+        <div style={overlayStyle}>
+          <div style={modalStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 className="display-font" style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Plus size={20} color="var(--accent-primary)" /> Add New Employee
               </h2>
-              <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
+              <button onClick={() => setIsAddModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px' }}>
+                <X size={20} />
+              </button>
             </div>
             {tempPassword ? (
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 mb-4">
-                <div className="flex items-start gap-3">
-                  <Check className="text-emerald-500 mt-1" size={20} />
+              <div style={{ backgroundColor: 'rgba(18, 183, 106, 0.08)', border: '1px solid rgba(18, 183, 106, 0.3)', borderRadius: '10px', padding: '20px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <ShieldCheck size={20} color="var(--accent-trust)" style={{ flexShrink: 0, marginTop: '2px' }} />
                   <div>
-                    <h3 className="text-emerald-500 font-semibold mb-1">Employee created!</h3>
-                    <p className="text-slate-300 text-sm mb-3">Please copy the temporary password below. It will not be shown again.</p>
-                    <div className="font-mono bg-slate-950 p-3 rounded-lg text-emerald-400 text-lg text-center select-all border border-emerald-500/20">
+                    <h3 style={{ color: 'var(--accent-trust)', fontWeight: '600', marginBottom: '6px' }}>Employee Created!</h3>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Copy the temporary password below. It will NOT be shown again.</p>
+                    <div className="mono-font" style={{ backgroundColor: 'var(--bg-base)', padding: '12px', borderRadius: '8px', color: 'var(--accent-trust)', fontSize: '18px', textAlign: 'center', border: '1px solid rgba(18,183,106,0.2)', letterSpacing: '0.1em', userSelect: 'all' }}>
                       {tempPassword}
                     </div>
                   </div>
                 </div>
-                <button onClick={() => {setIsAddModalOpen(false); setTempPassword(null)}} className="w-full mt-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">Done</button>
+                <button
+                  onClick={() => { setIsAddModalOpen(false); setTempPassword(null); }}
+                  className="btn-primary"
+                  style={{ width: '100%', marginTop: '16px', justifyContent: 'center' }}
+                >
+                  Done
+                </button>
               </div>
             ) : (
-              <form onSubmit={handleAddEmployee} className="space-y-4">
+              <form onSubmit={handleAddEmployee} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Full Name</label>
-                  <input required type="text" value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500" placeholder="John Doe" />
+                  <label style={labelStyle}>Full Name</label>
+                  <input required type="text" value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} className="input-field" placeholder="e.g. Jane Doe" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Username (ID)</label>
-                  <input required type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500" placeholder="emp_03" />
+                  <label style={labelStyle}>Username (Employee ID)</label>
+                  <input required type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="input-field" placeholder="e.g. emp_03" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Department</label>
-                  <input required type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500" placeholder="Engineering" />
+                  <label style={labelStyle}>Department</label>
+                  <input required type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="input-field" placeholder="e.g. Engineering" />
                 </div>
-                <div className="pt-2 flex justify-end gap-3">
-                  <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 font-medium">Cancel</button>
-                  <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 font-medium text-white flex items-center gap-2">Create Employee</button>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '8px' }}>
+                  <button type="button" onClick={() => setIsAddModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)', cursor: 'pointer', fontWeight: '500', color: 'var(--text-primary)' }}>Cancel</button>
+                  <button type="submit" className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Plus size={16} /> Create Employee
+                  </button>
                 </div>
               </form>
             )}
@@ -300,49 +341,57 @@ export default function AdminEmployees() {
 
       {/* Edit Employee Modal */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Edit2 size={20} className="text-blue-500"/> Edit Employee
+        <div style={overlayStyle}>
+          <div style={modalStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 className="display-font" style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Edit2 size={20} color="var(--accent-primary)" /> Edit Employee
               </h2>
-              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
+              <button onClick={() => setIsEditModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px' }}>
+                <X size={20} />
+              </button>
             </div>
             {tempPassword ? (
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 mb-4">
-                <div className="flex items-start gap-3">
-                  <Check className="text-emerald-500 mt-1" size={20} />
+              <div style={{ backgroundColor: 'rgba(18, 183, 106, 0.08)', border: '1px solid rgba(18, 183, 106, 0.3)', borderRadius: '10px', padding: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <ShieldCheck size={20} color="var(--accent-trust)" style={{ flexShrink: 0, marginTop: '2px' }} />
                   <div>
-                    <h3 className="text-emerald-500 font-semibold mb-1">Password Reset!</h3>
-                    <p className="text-slate-300 text-sm mb-3">Please copy the new temporary password below.</p>
-                    <div className="font-mono bg-slate-950 p-3 rounded-lg text-emerald-400 text-lg text-center select-all border border-emerald-500/20">
+                    <h3 style={{ color: 'var(--accent-trust)', fontWeight: '600', marginBottom: '6px' }}>Password Reset!</h3>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Copy the new temporary password below.</p>
+                    <div className="mono-font" style={{ backgroundColor: 'var(--bg-base)', padding: '12px', borderRadius: '8px', color: 'var(--accent-trust)', fontSize: '18px', textAlign: 'center', border: '1px solid rgba(18,183,106,0.2)', letterSpacing: '0.1em', userSelect: 'all' }}>
                       {tempPassword}
                     </div>
                   </div>
                 </div>
-                <button onClick={() => {setIsEditModalOpen(false); setTempPassword(null)}} className="w-full mt-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">Done</button>
+                <button
+                  onClick={() => { setIsEditModalOpen(false); setTempPassword(null); }}
+                  className="btn-primary"
+                  style={{ width: '100%', marginTop: '16px', justifyContent: 'center' }}
+                >
+                  Done
+                </button>
               </div>
             ) : (
-              <form onSubmit={handleEditEmployee} className="space-y-4">
+              <form onSubmit={handleEditEmployee} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Full Name</label>
-                  <input required type="text" value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Username (ID)</label>
-                  <input type="text" disabled value={formData.username} className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-slate-500 cursor-not-allowed" />
+                  <label style={labelStyle}>Full Name</label>
+                  <input required type="text" value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} className="input-field" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Department</label>
-                  <input required type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500" />
+                  <label style={labelStyle}>Username (Employee ID)</label>
+                  <input type="text" disabled value={formData.username} className="input-field" style={{ opacity: 0.5, cursor: 'not-allowed' }} />
                 </div>
-                <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg mt-4">
-                  <input type="checkbox" id="reset_pwd" checked={formData.reset_password} onChange={e => setFormData({...formData, reset_password: e.target.checked})} className="w-4 h-4 rounded bg-slate-950 border-white/10 text-amber-500 focus:ring-amber-500/50" />
-                  <label htmlFor="reset_pwd" className="text-sm text-amber-500/90 font-medium cursor-pointer">Generate new temporary password</label>
+                <div>
+                  <label style={labelStyle}>Department</label>
+                  <input required type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="input-field" />
                 </div>
-                <div className="pt-2 flex justify-end gap-3">
-                  <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 font-medium">Cancel</button>
-                  <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 font-medium text-white">Save Changes</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', backgroundColor: 'rgba(247, 144, 9, 0.06)', borderRadius: '8px', border: '1px solid rgba(247,144,9,0.25)' }}>
+                  <input type="checkbox" id="reset_pwd" checked={formData.reset_password} onChange={e => setFormData({...formData, reset_password: e.target.checked})} style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: 'var(--accent-warn)' }} />
+                  <label htmlFor="reset_pwd" style={{ fontSize: '13px', color: 'var(--accent-warn)', fontWeight: '500', cursor: 'pointer' }}>Generate new temporary password on save</label>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '8px' }}>
+                  <button type="button" onClick={() => setIsEditModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)', cursor: 'pointer', fontWeight: '500', color: 'var(--text-primary)' }}>Cancel</button>
+                  <button type="submit" className="btn-primary">Save Changes</button>
                 </div>
               </form>
             )}

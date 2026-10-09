@@ -145,8 +145,8 @@ function AdminLiveSessionPanel({ employee, onBack, onRefresh }: { employee: Empl
 
   const connectAdminWs = useCallback(() => {
     if (isDestroyed.current || !sessionId || activeSession?.status !== 'active') return;
-
-    const socket = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}`);
+    const token = localStorage.getItem('trustloop_token') || '';
+    const socket = new WebSocket(`${WS_BASE_URL}/ws/session/${sessionId}?token=${encodeURIComponent(token)}`);
     wsRef.current = socket;
 
     socket.onopen = () => {
@@ -383,10 +383,14 @@ export default function AdminDashboard() {
   const [networkStats, setNetworkStats] = useState({ recognized: 0, unrecognized: 0 });
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
 
+  const adminToken = () => localStorage.getItem('trustloop_token') || '';
+  const adminFetch = (url: string, opts: RequestInit = {}) =>
+    fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${adminToken()}`, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+
   const fetchData = useCallback(() => {
-    fetch(API_BASE_URL + '/api/admin/employees').then(r => r.json()).then(setEmployees).catch(() => {});
-    fetch(API_BASE_URL + '/api/admin/events').then(r => r.json()).then(setEvents).catch(() => {});
-    fetch(API_BASE_URL + '/api/admin/network_stats').then(r => r.json()).then(setNetworkStats).catch(() => {});
+    adminFetch(API_BASE_URL + '/api/admin/employees').then(r => r.json()).then(setEmployees).catch(() => {});
+    adminFetch(API_BASE_URL + '/api/admin/events').then(r => r.json()).then(setEvents).catch(() => {});
+    adminFetch(API_BASE_URL + '/api/admin/network_stats').then(r => r.json()).then(setNetworkStats).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -397,7 +401,7 @@ export default function AdminDashboard() {
   }, [role, navigate, fetchData]);
 
   const handleSimulate = (sessionId: number, active: boolean) => {
-    fetch(`${API_BASE_URL}/api/admin/simulate/${sessionId}?active=${active}`, { method: 'POST' })
+    adminFetch(`${API_BASE_URL}/api/admin/simulate/${sessionId}?active=${active}`, { method: 'POST' })
       .then(() => fetchData());
   };
 
@@ -534,7 +538,7 @@ export default function AdminDashboard() {
                                   </button>
                                   <button 
                                     onClick={() => {
-                                      fetch(`${API_BASE_URL}/api/admin/sessions/${latest.session_id}/terminate`, { method: 'POST' })
+                                      adminFetch(`${API_BASE_URL}/api/admin/sessions/${latest.session_id}/terminate`, { method: 'POST' })
                                         .then(() => fetchData());
                                     }}
                                     style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '12px', color: 'var(--text-primary)', fontWeight: '600' }}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL, WS_BASE_URL } from "../config";
+import { API_BASE_URL } from "../config";
 import { Bell, AlertTriangle, CheckCircle, Activity, X } from 'lucide-react';
 
 export default function Notifications() {
@@ -8,7 +8,10 @@ export default function Notifications() {
   const [unread, setUnread] = useState(0);
 
   const fetchEvents = () => {
-    fetch(API_BASE_URL + '/api/admin/events')
+    const token = localStorage.getItem('trustloop_token') || '';
+    fetch(API_BASE_URL + '/api/admin/events', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
       .then(r => r.json())
       .then(data => {
         setEvents(data);

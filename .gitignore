@@ -26,6 +26,11 @@ env.bak/
 venv.bak/
 backend/venv/
 backend/__pycache__/
+.env
+backend/.env
+!.env.example
+!backend/.env.example
+backend/tor_exit_nodes.json
 
 # Node / Frontend
 node_modules/

@@ -1,8 +1,8 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from models import Base, User, Setting
+from models import Base, User, Setting, CorporateAllowlist, NetworkEvent
 from passlib.context import CryptContext
 
 load_dotenv()
@@ -31,17 +31,44 @@ def get_db():
     finally:
         db.close()
 
+def _migrate_session_columns():
+    """Ensure newly added columns exist in sqlite sessions table."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(sessions)"))
+            existing_columns = {row[1] for row in result.fetchall()}
+            
+            columns_to_add = [
+                ("network_risk_score", "FLOAT DEFAULT 0.0"),
+                ("device_fingerprint", "TEXT DEFAULT '{}'"),
+                ("asn", "VARCHAR DEFAULT 'Unknown'"),
+                ("is_vpn", "BOOLEAN DEFAULT 0"),
+                ("is_tor", "BOOLEAN DEFAULT 0"),
+                ("is_proxy", "BOOLEAN DEFAULT 0"),
+                ("is_datacenter", "BOOLEAN DEFAULT 0"),
+                ("avg_latency_ms", "FLOAT DEFAULT 0.0"),
+                ("jitter_ms", "FLOAT DEFAULT 0.0"),
+                ("reconnect_count", "INTEGER DEFAULT 0"),
+            ]
+            for col_name, col_type in columns_to_add:
+                if col_name not in existing_columns:
+                    conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col_name} {col_type}"))
+            conn.commit()
+    except Exception as e:
+        print(f"[TrustLoop DB] Column migration notice: {e}")
+
 def init_db():
     # Create tables
     Base.metadata.create_all(bind=engine)
+    _migrate_session_columns()
     
     db = SessionLocal()
     try:
         count = db.query(User).count()
         
-        admin_pw = "admin123"
-        emp1_pw = "password123"
-        emp2_pw = "password456"
+        admin_pw = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin123")
+        emp1_pw = os.environ.get("DEFAULT_EMP1_PASSWORD", "password123")
+        emp2_pw = os.environ.get("DEFAULT_EMP2_PASSWORD", "password456")
         
         if count == 0:
             print("[TrustLoop DB] No users found. Seeding initial data...")
@@ -64,6 +91,21 @@ def init_db():
                 admin_user.password_hash = pwd_context.hash(admin_pw)
                 db.commit()
                 
+        # Seed Corporate Allowlist defaults if empty
+        allowlist_count = db.query(CorporateAllowlist).count()
+        if allowlist_count == 0:
+            default_entries = [
+                CorporateAllowlist(entry_type="ISP", value="Acme Corp Internal Network", description="Headquarters corporate intranet"),
+                CorporateAllowlist(entry_type="IP", value="127.0.0.1", description="Local development loopback"),
+                CorporateAllowlist(entry_type="IP", value="::1", description="IPv6 loopback"),
+                CorporateAllowlist(entry_type="ISP", value="Google LLC", description="Trusted corporate cloud gateway"),
+                CorporateAllowlist(entry_type="ASN", value="AS15169", description="Google Autonomous System"),
+                CorporateAllowlist(entry_type="ISP", value="Amazon.com, Inc.", description="Trusted corporate AWS gateway"),
+                CorporateAllowlist(entry_type="ASN", value="AS16509", description="Amazon AWS Autonomous System")
+            ]
+            db.add_all(default_entries)
+            db.commit()
+
         # Query and print seeded admin user to console
         admin_users = db.query(User).filter(User.role == 'admin').all()
         for ar in admin_users:

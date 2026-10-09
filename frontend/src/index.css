@@ -93,3 +93,40 @@ input, button {
 .animate-spin {
   animation: spin 1s linear infinite;
 }
+
+/* Glassmorphism & Premium UI Utilities */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+}
+
+.premium-gradient-bg {
+  background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.premium-gradient-bg::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(51,92,255,0.05) 0%, rgba(255,255,255,0) 70%);
+  animation: pulse-glow 15s infinite alternate;
+  z-index: 0;
+}
+
+@keyframes pulse-glow {
+  0% { transform: scale(0.8) translate(0, 0); }
+  100% { transform: scale(1.1) translate(5%, 5%); }
+}
+
+.relative-z-1 {
+  position: relative;
+  z-index: 1;
+}

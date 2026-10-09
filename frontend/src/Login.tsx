@@ -74,15 +74,15 @@ export default function Login() {
   const selectedFullName = employees.find(e => e.username === selectedEmp)?.full_name || '';
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-base)', padding: '24px' }}>
-      <div className="card" style={{ maxWidth: '420px', width: '100%' }}>
+    <div className="premium-gradient-bg" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+      <div className="card glass-panel relative-z-1" style={{ maxWidth: '420px', width: '100%', border: '1px solid rgba(255,255,255,0.6)' }}>
         
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <div style={{ display: 'inline-flex', padding: '12px', backgroundColor: 'rgba(51, 92, 255, 0.1)', borderRadius: '12px', marginBottom: '16px' }}>
-            <ShieldCheck size={32} color="var(--accent-primary)" />
+          <div style={{ display: 'inline-flex', padding: '16px', backgroundColor: 'rgba(51, 92, 255, 0.08)', borderRadius: '16px', marginBottom: '16px', boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.5)' }}>
+            <ShieldCheck size={36} color="var(--accent-primary)" strokeWidth={2.5} />
           </div>
-          <h1 className="display-font" style={{ fontSize: '24px', marginBottom: '8px' }}>TrustLoop</h1>
-          <p style={{ color: 'var(--text-secondary)' }}>Continuous Authentication Engine</p>
+          <h1 className="display-font" style={{ fontSize: '28px', marginBottom: '8px', background: 'linear-gradient(90deg, #101828 0%, #335CFF 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>TrustLoop</h1>
+          <p style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Continuous Authentication Engine</p>
         </div>
 
         {/* Tab Toggle */}

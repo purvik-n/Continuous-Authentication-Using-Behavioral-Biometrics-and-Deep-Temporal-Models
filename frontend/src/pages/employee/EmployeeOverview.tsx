@@ -1,6 +1,7 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useEmployeeContext } from '../../contexts/EmployeeContext';
-import { ShieldCheck, Target, AlertTriangle, Lock, Wifi, Monitor, Clock, Info, Activity } from 'lucide-react';
+import { ShieldCheck, Target, AlertTriangle, Lock, Wifi, Monitor, Clock, Info, Activity, ArrowRight } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 
 function parseUA(ua: string): { browser: string; os: string } {
@@ -16,10 +17,11 @@ function parseUA(ua: string): { browser: string; os: string } {
 }
 
 export default function EmployeeOverview() {
+  const navigate = useNavigate();
   const { 
-    trustScore, isEnrolled, isSimulated, isImpostor, setIsImpostor, 
+    trustScore, isEnrolled, enrollmentProgress, isSimulated,
     mySessions, contributions, radarData, scoreHistory, alerts,
-    liveMetrics, baselineMetrics
+    liveMetrics, baselineMetrics, networkRiskScore, latencyStats
   } = useEmployeeContext();
   
   const network_isp = localStorage.getItem('trustloop_network_isp') || 'Unknown';
@@ -43,41 +45,69 @@ export default function EmployeeOverview() {
   const strokeDashoffset = circumference - (trustScore / 100) * circumference;
   const statusColor = getStatusColor(trustScore);
 
+  const batchesCollected = Math.min(15, Math.round(enrollmentProgress * 15));
+  const progressPercent = Math.min(100, Math.round(enrollmentProgress * 100));
+
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
         <div>
           <h1 className="display-font" style={{ fontSize: '24px' }}>Session Overview</h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' }}>Continuous behavioral biometric & network authentication stream</p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          {isEnrolled && (
-            <button 
-              className="btn-primary"
-              style={{ 
-                backgroundColor: isImpostor ? 'var(--bg-elevated)' : 'rgba(240, 68, 56, 0.08)',
-                color: 'var(--accent-danger)',
-                border: '1px solid var(--accent-danger)'
-              }}
-              onClick={() => setIsImpostor(!isImpostor)}
-            >
-              {isImpostor ? 'Stop Impostor' : 'Simulate Impostor'}
-            </button>
-          )}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 14px', borderRadius: '20px', backgroundColor: 'rgba(18, 183, 106, 0.1)', color: 'var(--accent-trust)', fontSize: '13px', fontWeight: 500 }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-trust)' }}></span>
+            Protected & Live
+          </div>
         </div>
       </header>
 
       {!isEnrolled ? (
-        <div className="card" style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
+        <div className="card" style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center', padding: '40px 32px' }}>
           <div style={{ marginBottom: '24px' }}>
-            <Target size={48} color="var(--accent-warn)" style={{ margin: '0 auto' }} />
-            <h2 className="display-font" style={{ marginTop: '16px', fontSize: '24px' }}>Baseline Enrollment</h2>
-            <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
-              We need to learn your unique typing and mouse patterns. Please go to the Workspace tab and use the mock apps naturally.
+            <div style={{ display: 'inline-flex', padding: '16px', borderRadius: '50%', backgroundColor: 'rgba(247, 144, 9, 0.1)', marginBottom: '16px' }}>
+              <Target size={44} color="var(--accent-warn)" />
+            </div>
+            <h2 className="display-font" style={{ fontSize: '24px' }}>Baseline Behavioral Enrollment</h2>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '8px', maxWidth: '520px', margin: '8px auto 0' }}>
+              TrustLoop is learning your unique keystroke rhythm and mouse movement dynamics to construct your biometric signature.
             </p>
           </div>
-          <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '24px', borderRadius: '8px', border: '1px solid var(--border-subtle)', marginBottom: '24px', textAlign: 'left', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            <p className="mono-font">To enroll, simply navigate to the "Workspace" tab in the sidebar and interact with the mock email or kanban board until the baseline is established.</p>
+
+          {/* Enrollment Progress Bar */}
+          <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-subtle)', marginBottom: '28px', textAlign: 'left' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <span style={{ fontSize: '14px', fontWeight: 600 }}>Enrollment Progress</span>
+              <span className="mono-font" style={{ fontSize: '13px', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                {batchesCollected} / 15 Batches ({progressPercent}%)
+              </span>
+            </div>
+            <div style={{ width: '100%', height: '12px', backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: '6px', overflow: 'hidden' }}>
+              <div 
+                style={{ 
+                  height: '100%', 
+                  width: `${Math.max(5, progressPercent)}%`, 
+                  backgroundColor: 'var(--accent-primary)', 
+                  borderRadius: '6px', 
+                  transition: 'width 0.4s ease' 
+                }} 
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <span>Typing cadence & mouse curvature telemetry</span>
+              <span>Need {15 - batchesCollected} more batches</span>
+            </div>
           </div>
+
+          <button 
+            className="btn-primary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', fontSize: '15px' }}
+            onClick={() => navigate('/employee/workspace')}
+          >
+            Launch Corporate Workspace to Complete Enrollment
+            <ArrowRight size={18} />
+          </button>
         </div>
       ) : (
         <>

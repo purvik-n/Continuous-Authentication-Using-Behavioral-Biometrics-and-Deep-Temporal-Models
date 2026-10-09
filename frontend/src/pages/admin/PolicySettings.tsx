@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE_URL, WS_BASE_URL } from "../../config";
+import { API_BASE_URL } from "../../config";
 import { Settings, Save, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 export default function PolicySettings() {
@@ -9,7 +9,10 @@ export default function PolicySettings() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    fetch(API_BASE_URL + '/api/admin/settings')
+    const token = localStorage.getItem('trustloop_token') || '';
+    fetch(API_BASE_URL + '/api/admin/settings', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
       .then(res => res.json())
       .then(data => {
         setLockThreshold(data.lock_threshold || 60);
@@ -21,10 +24,11 @@ export default function PolicySettings() {
   const handleSave = async () => {
     setSaving(true);
     setMessage('');
+    const token = localStorage.getItem('trustloop_token') || '';
     try {
       const res = await fetch(API_BASE_URL + '/api/admin/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
           lock_threshold: lockThreshold,
           risk_threshold: riskThreshold

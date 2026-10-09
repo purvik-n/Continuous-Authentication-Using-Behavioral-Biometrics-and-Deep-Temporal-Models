@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { API_BASE_URL, WS_BASE_URL } from "../../config";
+import { API_BASE_URL } from "../../config";
 import { FileText, Download, CheckCircle, AlertTriangle, Activity } from 'lucide-react';
 
 export default function AuditLog() {
   const [events, setEvents] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch(API_BASE_URL + '/api/admin/events')
+    const token = localStorage.getItem('trustloop_token') || '';
+    fetch(API_BASE_URL + '/api/admin/events', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
       .then(r => r.json())
       .then(setEvents)
       .catch(console.error);
